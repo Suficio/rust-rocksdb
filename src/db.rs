@@ -2442,52 +2442,8 @@ impl<T: ThreadMode, D: DBInner> DBCommon<T, D> {
 
     /// Returns a list of all table files with their level, start key
     /// and end key
-    pub fn live_files(&self) -> Result<Vec<LiveFile>, Error> {
-        unsafe {
-            let files = ffi::rocksdb_livefiles(self.inner.inner());
-            if files.is_null() {
-                Err(Error::new("Could not get live files".to_owned()))
-            } else {
-                let n = ffi::rocksdb_livefiles_count(files);
-
-                let mut livefiles = Vec::with_capacity(n as usize);
-                let mut key_size: usize = 0;
-
-                for i in 0..n {
-                    // rocksdb_livefiles_* returns pointers to strings, not copies
-                    let column_family_name =
-                        from_cstr_without_free(ffi::rocksdb_livefiles_column_family_name(files, i));
-                    let name = from_cstr_without_free(ffi::rocksdb_livefiles_name(files, i));
-                    let size = ffi::rocksdb_livefiles_size(files, i);
-                    let level = ffi::rocksdb_livefiles_level(files, i);
-
-                    // get smallest key inside file
-                    let smallest_key = ffi::rocksdb_livefiles_smallestkey(files, i, &mut key_size);
-                    let smallest_key = raw_data(smallest_key, key_size);
-
-                    // get largest key inside file
-                    let largest_key = ffi::rocksdb_livefiles_largestkey(files, i, &mut key_size);
-                    let largest_key = raw_data(largest_key, key_size);
-
-                    livefiles.push(LiveFile {
-                        column_family_name,
-                        name,
-                        size,
-                        level,
-                        start_key: smallest_key,
-                        end_key: largest_key,
-                        num_entries: ffi::rocksdb_livefiles_entries(files, i),
-                        num_deletions: ffi::rocksdb_livefiles_deletions(files, i),
-                    });
-                }
-
-                // destroy livefiles metadata(s)
-                ffi::rocksdb_livefiles_destroy(files);
-
-                // return
-                Ok(livefiles)
-            }
-        }
+    pub fn live_files(&self) -> Result<LiveFiles, Error> {
+        LiveFiles::new(self)
     }
 
     /// Delete sst files whose keys are entirely in the given range.
@@ -2701,25 +2657,133 @@ pub struct ColumnFamilyMetaData {
     pub file_count: usize,
 }
 
-/// The metadata that describes a SST file
-#[derive(Debug, Clone)]
-pub struct LiveFile {
+pub struct LiveFile<'a> {
+    inner: &'a LiveFiles,
+    index: i32,
+}
+
+impl LiveFile<'_> {
     /// Name of the column family the file belongs to
-    pub column_family_name: String,
+    pub fn column_family_name(&self) -> String {
+        unsafe {
+            from_cstr_without_free(ffi::rocksdb_livefiles_column_family_name(
+                self.inner.inner,
+                self.index,
+            ))
+        }
+    }
+
     /// Name of the file
-    pub name: String,
-    /// Size of the file
-    pub size: usize,
+    pub fn name(&self) -> String {
+        unsafe { from_cstr_without_free(ffi::rocksdb_livefiles_name(self.inner.inner, self.index)) }
+    }
+
+    /// Size of the file in bytes
+    pub fn size(&self) -> usize {
+        unsafe { ffi::rocksdb_livefiles_size(self.inner.inner, self.index) }
+    }
+
     /// Level at which this file resides
-    pub level: i32,
+    pub fn level(&self) -> i32 {
+        unsafe { ffi::rocksdb_livefiles_level(self.inner.inner, self.index) }
+    }
+
     /// Smallest user defined key in the file
-    pub start_key: Option<Vec<u8>>,
+    pub fn start_key(&self) -> Option<Vec<u8>> {
+        unsafe {
+            let mut key_size = 0;
+            let key_ptr =
+                ffi::rocksdb_livefiles_smallestkey(self.inner.inner, self.index, &mut key_size);
+            raw_data(key_ptr, key_size)
+        }
+    }
+
     /// Largest user defined key in the file
-    pub end_key: Option<Vec<u8>>,
+    pub fn end_key(&self) -> Option<Vec<u8>> {
+        unsafe {
+            let mut key_size = 0;
+            let key_ptr =
+                ffi::rocksdb_livefiles_largestkey(self.inner.inner, self.index, &mut key_size);
+            raw_data(key_ptr, key_size)
+        }
+    }
+
     /// Number of entries/alive keys in the file
-    pub num_entries: u64,
+    pub fn num_entries(&self) -> u64 {
+        unsafe { ffi::rocksdb_livefiles_entries(self.inner.inner, self.index) }
+    }
+
     /// Number of deletions/tomb key(s) in the file
-    pub num_deletions: u64,
+    pub fn num_deletions(&self) -> u64 {
+        unsafe { ffi::rocksdb_livefiles_deletions(self.inner.inner, self.index) }
+    }
+}
+
+pub struct LiveFilesIter<'a> {
+    inner: &'a LiveFiles,
+    count: std::ops::Range<usize>,
+}
+
+impl<'a> Iterator for LiveFilesIter<'a> {
+    type Item = LiveFile<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.count.next()?;
+        Some(LiveFile {
+            inner: self.inner,
+            index: index as i32,
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        Iterator::size_hint(&self.count)
+    }
+}
+
+impl ExactSizeIterator for LiveFilesIter<'_> {
+    fn len(&self) -> usize {
+        ExactSizeIterator::len(&self.count)
+    }
+}
+
+pub struct LiveFiles {
+    inner: *const ffi::rocksdb_livefiles_t,
+}
+
+impl LiveFiles {
+    fn new<T: ThreadMode, D: DBInner>(db: &DBCommon<T, D>) -> Result<Self, Error> {
+        let inner = unsafe { ffi::rocksdb_livefiles(db.inner.inner()) };
+        if inner.is_null() {
+            return Err(Error::new("Could not get live files".to_owned()));
+        }
+        Ok(Self { inner })
+    }
+
+    pub fn len(&self) -> usize {
+        // SAFE: `self.inner` is non-null
+        unsafe { ffi::rocksdb_livefiles_count(self.inner) as usize }
+    }
+}
+
+impl<'a> IntoIterator for &'a LiveFiles {
+    type Item = LiveFile<'a>;
+    type IntoIter = LiveFilesIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        LiveFilesIter {
+            inner: &self,
+            count: 0..self.len(),
+        }
+    }
+}
+
+impl Drop for LiveFiles {
+    fn drop(&mut self) {
+        // SAFE: `self.inner` is non-null
+        unsafe {
+            ffi::rocksdb_livefiles_destroy(self.inner);
+        }
+    }
 }
 
 fn convert_options(opts: &[(&str, &str)]) -> Result<Vec<(CString, CString)>, Error> {

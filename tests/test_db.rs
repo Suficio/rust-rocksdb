@@ -905,14 +905,14 @@ fn fifo_compaction_test() {
         // check live files (sst files meta)
         let livefiles = db.live_files().unwrap();
         assert_eq!(livefiles.len(), 1);
-        livefiles.iter().for_each(|f| {
-            assert_eq!(f.level, 6);
-            assert_eq!(f.column_family_name, "cf1");
-            assert!(!f.name.is_empty());
-            assert_eq!(f.start_key.as_ref().unwrap().as_slice(), "k1".as_bytes());
-            assert_eq!(f.end_key.as_ref().unwrap().as_slice(), "k5".as_bytes());
-            assert_eq!(f.num_entries, 5);
-            assert_eq!(f.num_deletions, 0);
+        livefiles.into_iter().for_each(|f| {
+            assert_eq!(f.level(), 6);
+            assert_eq!(f.column_family_name(), "cf1");
+            assert!(!f.name().is_empty());
+            assert_eq!(f.start_key().unwrap(), "k1".as_bytes());
+            assert_eq!(f.end_key().unwrap(), "k5".as_bytes());
+            assert_eq!(f.num_entries(), 5);
+            assert_eq!(f.num_deletions(), 0);
         });
     }
 }
@@ -1090,20 +1090,14 @@ fn get_with_cache_and_bulkload_test() {
             // check live files (sst files meta)
             let livefiles = db.live_files().unwrap();
             assert_eq!(livefiles.len(), 1);
-            livefiles.iter().for_each(|f| {
-                assert_eq!(f.level, 2);
-                assert_eq!(f.column_family_name, "default");
-                assert!(!f.name.is_empty());
-                assert_eq!(
-                    f.start_key.as_ref().unwrap().as_slice(),
-                    format!("{:0>4}", 0).as_bytes()
-                );
-                assert_eq!(
-                    f.end_key.as_ref().unwrap().as_slice(),
-                    format!("{:0>4}", 9999).as_bytes()
-                );
-                assert_eq!(f.num_entries, 10000);
-                assert_eq!(f.num_deletions, 0);
+            livefiles.into_iter().for_each(|f| {
+                assert_eq!(f.level(), 2);
+                assert_eq!(f.column_family_name(), "default");
+                assert!(!f.name().is_empty());
+                assert_eq!(f.start_key().unwrap(), format!("{:0>4}", 0).as_bytes());
+                assert_eq!(f.end_key().unwrap(), format!("{:0>4}", 9999).as_bytes());
+                assert_eq!(f.num_entries(), 10000);
+                assert_eq!(f.num_deletions(), 0);
             });
 
             // delete sst file in range (except L0)
@@ -1227,20 +1221,14 @@ fn get_with_cache_and_bulkload_and_blobs_test() {
         // check live files (sst files meta)
         let livefiles = db.live_files().unwrap();
         assert_eq!(livefiles.len(), 1);
-        livefiles.iter().for_each(|f| {
-            assert_eq!(f.level, 2);
-            assert_eq!(f.column_family_name, "default");
-            assert!(!f.name.is_empty());
-            assert_eq!(
-                f.start_key.as_ref().unwrap().as_slice(),
-                format!("{:0>4}", 0).as_bytes()
-            );
-            assert_eq!(
-                f.end_key.as_ref().unwrap().as_slice(),
-                format!("{:0>4}", 9999).as_bytes()
-            );
-            assert_eq!(f.num_entries, 10000);
-            assert_eq!(f.num_deletions, 0);
+        livefiles.into_iter().for_each(|f| {
+            assert_eq!(f.level(), 2);
+            assert_eq!(f.column_family_name(), "default");
+            assert!(!f.name().is_empty());
+            assert_eq!(f.start_key().unwrap(), format!("{:0>4}", 0).as_bytes());
+            assert_eq!(f.end_key().unwrap(), format!("{:0>4}", 9999).as_bytes());
+            assert_eq!(f.num_entries(), 10000);
+            assert_eq!(f.num_deletions(), 0);
         });
 
         // delete sst file in range (except L0)
